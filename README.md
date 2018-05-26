@@ -9,16 +9,16 @@ visdom
 <br>
 
 ### Usage
-download ```img_align_celeba.zip``` and ```list_eval_partition.txt``` files from [here], make ```data``` directory, put downloaded files into ```data```, and then run ```./preprocess_celeba.sh```
-initialize visdom
+1. download ```img_align_celeba.zip``` and ```list_eval_partition.txt``` files from [here], make ```data``` directory, put downloaded files into ```data```, and then run ```./preprocess_celeba.sh```<br>
+2. initialize visdom
 ```
 python -m visdom.server
 ```
-run by scripts
+3. run by scripts
 ```
 sh run_celeba_wae_mmd.sh
 ```
-check training process on the visdom server
+4. check training process on the visdom server
 ```
 localhost:8097
 ```
