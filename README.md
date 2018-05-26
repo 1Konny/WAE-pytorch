@@ -31,6 +31,8 @@ localhost:8097
 <br>
 
 ## Results - CelebA
+### training plots
+![curves](misc/curves.png)
 ### train data reconstruction
 ![train_recon](misc/train_reconstruction.jpg)
 ### test data reconstruction
@@ -39,7 +41,5 @@ localhost:8097
 <p align="center">
 <img src=misc/random_sample.jpg>
 </p>
-### training plots
-![curves](misc/curves.png)
 
 [here]: http://mmlab.ie.cuhk.edu.hk/projects/CelebA.html
