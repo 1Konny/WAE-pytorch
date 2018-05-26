@@ -9,7 +9,14 @@ visdom
 <br>
 
 ### Usage
-1. download ```img_align_celeba.zip``` and ```list_eval_partition.txt``` files from [here], make ```data``` directory, put downloaded files into ```data```, and then run ```./preprocess_celeba.sh```<br>
+1. download ```img_align_celeba.zip``` and ```list_eval_partition.txt``` files from [here], make ```data``` directory, put downloaded files into ```data```, and then run ```./preprocess_celeba.sh```. for example,
+for example,
+```
+.
+└── data
+  └── img_align_celeba.zip
+  └── list_eval_partition.txt
+```
 2. initialize visdom
 ```
 python -m visdom.server
