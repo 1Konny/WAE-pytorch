@@ -1,4 +1,5 @@
 # WAE-pytorch
+Pytorch implementation of WAE-MMD([paper]).
 
 ### Dependencies
 ```
@@ -43,3 +44,4 @@ localhost:8097
 </p>
 
 [here]: http://mmlab.ie.cuhk.edu.hk/projects/CelebA.html
+[paper]: https://arxiv.org/abs/1711.01558
