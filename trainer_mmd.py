@@ -101,12 +101,12 @@ class Trainer(object):
                     total_loss.backward()
                     self.optim.step()
 
-                    if self.global_iter%10 == 0:
+                    if self.global_iter%1000 == 0:
                         self.gather.insert(iter=self.global_iter,
                                         mu=z.mean(0).data, var=z.var(0).data,
                                         recon_loss=recon_loss.data, mmd_loss=mmd_loss.data,)
 
-                    if self.global_iter%50 == 0:
+                    if self.global_iter%5000 == 0:
                         self.gather.insert(images=x.data)
                         self.gather.insert(images=x_recon.data)
                         self.viz_reconstruction()
@@ -117,7 +117,7 @@ class Trainer(object):
                         pbar.write('[{}] total_loss:{:.3f} recon_loss:{:.3f} mmd_loss:{:.3f}'.format(
                             self.global_iter, total_loss.data[0], recon_loss.data[0], mmd_loss.data[0]))
 
-                    if self.global_iter%100 == 0:
+                    if self.global_iter%20000 == 0:
                         self.save_checkpoint(str(self.global_iter))
 
 
