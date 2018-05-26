@@ -10,7 +10,6 @@ visdom
 
 ### Usage
 1. download ```img_align_celeba.zip``` and ```list_eval_partition.txt``` files from [here], make ```data``` directory, put downloaded files into ```data```, and then run ```./preprocess_celeba.sh```. for example,
-for example,
 ```
 .
 └── data
@@ -37,7 +36,9 @@ localhost:8097
 ### test data reconstruction
 ![test_recon](misc/test_reconstruction.jpg)
 ### random data generation via sampling z from P(z)
-![random_sample](misc/random_sample.jpg)
+<p align="center">
+<img src=misc/random_sample.jpg>
+</p>
 ### training plots
 ![curves](misc/curves.png)
 
