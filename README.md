@@ -45,7 +45,7 @@ localhost:8097
 
 ## References
 1. Wasserstein Auto-Encoders, Tolstikhin et al, ICLR, 2018
-2. Code repos : [official], [re-implemenation], both in Tensorflow
+2. Code repos : [official], [re-implemetation], both in Tensorflow
 
 [here]: http://mmlab.ie.cuhk.edu.hk/projects/CelebA.html
 [paper]: https://arxiv.org/abs/1711.01558
