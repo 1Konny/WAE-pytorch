@@ -43,5 +43,11 @@ localhost:8097
 <img src=misc/random_sample.jpg>
 </p>
 
+## References
+1. Wasserstein Auto-Encoders, Tolstikhin et al, ICLR, 2018
+2. Code repos : [official], [re-implemenation], both in Tensorflow
+
 [here]: http://mmlab.ie.cuhk.edu.hk/projects/CelebA.html
 [paper]: https://arxiv.org/abs/1711.01558
+[official]: https://github.com/tolstikhin/wae
+[re-implementation]: https://github.com/hiwonjoon/wae-wgan
