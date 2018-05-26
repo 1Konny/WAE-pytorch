@@ -1,4 +1,4 @@
-"""trainer.py"""
+"""trainer_gan.py"""
 
 import math
 from pathlib import Path
@@ -11,9 +11,9 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 from torchvision.utils import make_grid, save_image
 
-from model import WAE
+from model import WAE, Adversary
 from utils import DataGather
-from ops import reconstruction_loss, mmd, im_kernel_sum, multistep_lr_decay, cuda
+from ops import reconstruction_loss, mmd, im_kernel_sum, log_density_igaussian, multistep_lr_decay, cuda
 from dataset import return_data
 
 
@@ -27,8 +27,11 @@ class Trainer(object):
         self.z_dim = args.z_dim
         self.z_var = args.z_var
         self.z_sigma = math.sqrt(args.z_var)
+        self.prior_dist = torch.distributions.Normal(torch.zeros(self.z_dim),
+                                                     torch.ones(self.z_dim)*self.z_sigma)
         self._lambda = args.reg_weight
         self.lr = args.lr
+        self.lr_D = args.lr_D
         self.beta1 = args.beta1
         self.beta2 = args.beta2
         self.lr_schedules = {30:2, 50:5, 100:10}
@@ -39,10 +42,13 @@ class Trainer(object):
         else:
             raise NotImplementedError
 
-        net = WAE
-        self.net = cuda(net(self.z_dim, self.nc), self.use_cuda)
+        self.net = cuda(WAE(self.z_dim, self.nc), self.use_cuda)
         self.optim = optim.Adam(self.net.parameters(), lr=self.lr,
                                     betas=(self.beta1, self.beta2))
+
+        self.D = cuda(Adversary(self.z_dim), self.use_cuda)
+        self.optim_D = optim.Adam(self.D.parameters(), lr=self.lr_D,
+                                  betas=(self.beta1, self.beta2))
 
         self.gather = DataGather()
         self.viz_name = args.viz_name
@@ -51,7 +57,8 @@ class Trainer(object):
         if self.viz_on:
             self.viz = visdom.Visdom(env=self.viz_name+'_lines', port=self.viz_port)
             self.win_recon = None
-            self.win_mmd = None
+            self.win_QD = None
+            self.win_D = None
             self.win_mu = None
             self.win_var = None
 
@@ -75,6 +82,9 @@ class Trainer(object):
     def train(self):
         self.net.train()
 
+        ones = Variable(cuda(torch.ones(self.batch_size, 1), self.use_cuda))
+        zeros = Variable(cuda(torch.zeros(self.batch_size, 1), self.use_cuda))
+
         iters_per_epoch = len(self.data_loader)
         max_iter = self.max_epoch*iters_per_epoch
         pbar = tqdm(total=max_iter)
@@ -92,21 +102,40 @@ class Trainer(object):
                     x = Variable(cuda(x, self.use_cuda))
                     x_recon, z_tilde = self.net(x)
                     z = self.sample_z(template=z_tilde, sigma=self.z_sigma)
+                    log_p_z = log_density_igaussian(z, self.z_var).view(-1, 1)
+
+                    #D_z = self.D(z) + log_p_z.view(-1, 1)
+                    #D_z_tilde = self.D(z_tilde) + log_p_z.view(-1, 1)
+                    D_z = self.D(z)
+                    D_z_tilde = self.D(z_tilde)
+                    D_loss = F.binary_cross_entropy_with_logits(D_z+log_p_z, ones) + \
+                             F.binary_cross_entropy_with_logits(D_z_tilde+log_p_z, zeros)
+                    total_D_loss = self._lambda*D_loss
+
+                    self.optim_D.zero_grad()
+                    total_D_loss.backward(retain_graph=True)
+                    self.optim_D.step()
 
                     recon_loss = F.mse_loss(x_recon, x, size_average=False).div(self.batch_size)
-                    mmd_loss = mmd(z_tilde, z, z_var=self.z_var)
-                    total_loss = recon_loss + self._lambda*mmd_loss
+                    Q_loss = F.binary_cross_entropy_with_logits(D_z_tilde+log_p_z, ones)
+                    total_AE_loss = recon_loss + self._lambda*Q_loss
 
                     self.optim.zero_grad()
-                    total_loss.backward()
+                    total_AE_loss.backward()
                     self.optim.step()
 
-                    if self.global_iter%100 == 0:
+                    if self.global_iter%10 == 0:
                         self.gather.insert(iter=self.global_iter,
-                                        mu=z.mean(0).data, var=z.var(0).data,
-                                        recon_loss=recon_loss.data, mmd_loss=mmd_loss.data,)
+                                           D_z=F.sigmoid(D_z).mean().detach().data,
+                                           D_z_tilde=F.sigmoid(D_z_tilde).mean().detach().data,
+                                           mu=z.mean(0).data,
+                                           var=z.var(0).data,
+                                           recon_loss=recon_loss.data,
+                                           Q_loss=Q_loss.data,
+                                           D_loss=D_loss.data)
 
-                    if self.global_iter%500 == 0:
+
+                    if self.global_iter%50 == 0:
                         self.gather.insert(images=x.data)
                         self.gather.insert(images=x_recon.data)
                         self.viz_reconstruction()
@@ -114,8 +143,11 @@ class Trainer(object):
                         self.sample_x_from_z(n_sample=100)
                         self.gather.flush()
                         self.save_checkpoint('last')
-                        pbar.write('[{}] total_loss:{:.3f} recon_loss:{:.3f} mmd_loss:{:.3f}'.format(
-                            self.global_iter, total_loss.data[0], recon_loss.data[0], mmd_loss.data[0]))
+                        pbar.write('[{}] recon_loss:{:.3f} Q_loss:{:.3f} D_loss:{:.3f}'.format(
+                            self.global_iter, recon_loss.data[0], Q_loss.data[0], D_loss.data[0]))
+                        pbar.write('D_z:{:.3f} D_z_tilde:{:.3f}'.format(
+                            F.sigmoid(D_z).mean().detach().data[0],
+                            F.sigmoid(D_z_tilde).mean().detach().data[0]))
 
                     if self.global_iter%2000 == 0:
                         self.save_checkpoint(str(self.global_iter))
@@ -141,75 +173,102 @@ class Trainer(object):
     def viz_lines(self):
         self.net.eval()
         recon_losses = torch.stack(self.gather.data['recon_loss']).cpu()
-        mmd_losses = torch.stack(self.gather.data['mmd_loss']).cpu()
+        Q_losses = torch.stack(self.gather.data['Q_loss']).cpu()
+        D_losses = torch.stack(self.gather.data['D_loss']).cpu()
+        QD_losses = torch.cat([Q_losses, D_losses], 1)
+        D_zs = torch.stack(self.gather.data['D_z']).cpu()
+        D_z_tildes = torch.stack(self.gather.data['D_z_tilde']).cpu()
+        Ds = torch.cat([D_zs, D_z_tildes], 1)
         mus = torch.stack(self.gather.data['mu']).cpu()
         vars = torch.stack(self.gather.data['var']).cpu()
         iters = torch.Tensor(self.gather.data['iter'])
 
-        legend = []
+        legend_z = []
         for z_j in range(self.z_dim):
-            legend.append('z_{}'.format(z_j))
+            legend_z.append('z_{}'.format(z_j))
+
+        legend_QD = ['Q_loss', 'D_loss']
+        legend_D = ['D(z)', 'D(z_tilde)']
 
         if self.win_recon is None:
-            self.win_recon = self.viz.line(
-                                        X=iters,
-                                        Y=recon_losses,
-                                        env=self.viz_name+'_lines',
-                                        opts=dict(
-                                            width=400,
-                                            height=400,
-                                            xlabel='iteration',
-                                            title='reconsturction loss',))
+            self.win_recon = self.viz.line(X=iters,
+                                           Y=recon_losses,
+                                           env=self.viz_name+'_lines',
+                                           opts=dict(
+                                               width=400,
+                                               height=400,
+                                               xlabel='iteration',
+                                               title='reconsturction loss',))
         else:
-            self.win_recon = self.viz.line(
-                                        X=iters,
-                                        Y=recon_losses,
-                                        env=self.viz_name+'_lines',
-                                        win=self.win_recon,
-                                        update='append',
-                                        opts=dict(
-                                            width=400,
-                                            height=400,
-                                            xlabel='iteration',
-                                            title='reconsturction loss',))
+            self.win_recon = self.viz.line(X=iters,
+                                           Y=recon_losses,
+                                           env=self.viz_name+'_lines',
+                                           win=self.win_recon,
+                                           update='append',
+                                           opts=dict(
+                                               width=400,
+                                               height=400,
+                                               xlabel='iteration',
+                                               title='reconsturction loss',))
 
-        if self.win_mmd is None:
-            self.win_mmd = self.viz.line(
-                                        X=iters,
-                                        Y=mmd_losses,
+        if self.win_QD is None:
+            self.win_QD = self.viz.line(X=iters,
+                                        Y=QD_losses,
                                         env=self.viz_name+'_lines',
                                         opts=dict(
                                             width=400,
                                             height=400,
+                                            legend=legend_QD,
                                             xlabel='iteration',
-                                            title='maximum mean discrepancy',))
+                                            title='Q&D Losses',))
         else:
-            self.win_mmd = self.viz.line(
-                                        X=iters,
-                                        Y=mmd_losses,
+            self.win_QD = self.viz.line(X=iters,
+                                        Y=QD_losses,
                                         env=self.viz_name+'_lines',
-                                        win=self.win_mmd,
+                                        win=self.win_QD,
                                         update='append',
                                         opts=dict(
                                             width=400,
                                             height=400,
+                                            legend=legend_QD,
                                             xlabel='iteration',
-                                            title='maximum mean discrepancy',))
+                                            title='Q&D Losses',))
+
+        if self.win_D is None:
+            self.win_D = self.viz.line(X=iters,
+                                       Y=Ds,
+                                       env=self.viz_name+'_lines',
+                                       opts=dict(
+                                           width=400,
+                                           height=400,
+                                           legend=legend_D,
+                                           xlabel='iteration',
+                                           title='D(.)',))
+        else:
+            self.win_D = self.viz.line(X=iters,
+                                       Y=Ds,
+                                       env=self.viz_name+'_lines',
+                                       win=self.win_D,
+                                       update='append',
+                                       opts=dict(
+                                           width=400,
+                                           height=400,
+                                           legend=legend_D,
+                                           xlabel='iteration',
+                                           title='D(.)',))
 
         if self.win_mu is None:
-            self.win_mu = self.viz.line(
-                                        X=iters,
+            self.win_mu = self.viz.line(X=iters,
                                         Y=mus,
                                         env=self.viz_name+'_lines',
                                         opts=dict(
                                             width=400,
                                             height=400,
-                                            legend=legend,
+                                            legend=legend_z,
                                             xlabel='iteration',
                                             title='posterior mean',))
         else:
-            self.win_mu = self.viz.line(
-                                        X=iters,
+            self.win_mu = self.viz.line(X=iters,
                                         Y=vars,
                                         env=self.viz_name+'_lines',
                                         win=self.win_mu,
@@ -217,34 +276,32 @@ class Trainer(object):
                                         opts=dict(
                                             width=400,
                                             height=400,
-                                            legend=legend,
+                                            legend=legend_z,
                                             xlabel='iteration',
                                             title='posterior mean',))
 
         if self.win_var is None:
-            self.win_var = self.viz.line(
-                                        X=iters,
-                                        Y=vars,
-                                        env=self.viz_name+'_lines',
-                                        opts=dict(
-                                            width=400,
-                                            height=400,
-                                            legend=legend,
-                                            xlabel='iteration',
-                                            title='posterior variance',))
+            self.win_var = self.viz.line(X=iters,
+                                         Y=vars,
+                                         env=self.viz_name+'_lines',
+                                         opts=dict(
+                                             width=400,
+                                             height=400,
+                                             legend=legend_z,
+                                             xlabel='iteration',
+                                             title='posterior variance',))
         else:
-            self.win_var = self.viz.line(
-                                        X=iters,
-                                        Y=vars,
-                                        env=self.viz_name+'_lines',
-                                        win=self.win_var,
-                                        update='append',
-                                        opts=dict(
-                                            width=400,
-                                            height=400,
-                                            legend=legend,
-                                            xlabel='iteration',
-                                            title='posterior variance',))
+            self.win_var = self.viz.line(X=iters,
+                                         Y=vars,
+                                         env=self.viz_name+'_lines',
+                                         win=self.win_var,
+                                         update='append',
+                                         opts=dict(
+                                             width=400,
+                                             height=400,
+                                             legend=legend_z,
+                                             xlabel='iteration',
+                                             title='posterior variance',))
         self.net.train()
 
     def sample_z(self, n_sample=None, dim=None, sigma=None, template=None):
@@ -273,10 +330,13 @@ class Trainer(object):
         self.net.train()
 
     def save_checkpoint(self, filename, silent=True):
-        model_states = {'net':self.net.state_dict(),}
-        optim_states = {'optim':self.optim.state_dict(),}
+        model_states = {'net':self.net.state_dict(),
+                        'D':self.D.state_dict(),}
+        optim_states = {'optim':self.optim.state_dict(),
+                        'optim_D':self.optim_D.state_dict()}
         win_states = {'recon':self.win_recon,
-                      'kld':self.win_mmd,
+                      'QD':self.win_QD,
+                      'D':self.win_D,
                       'mu':self.win_mu,
                       'var':self.win_var,}
         states = {'iter':self.global_iter,
@@ -297,11 +357,14 @@ class Trainer(object):
             self.global_iter = checkpoint['iter']
             self.global_epoch = checkpoint['epoch']
             self.win_recon = checkpoint['win_states']['recon']
-            self.win_mmd = checkpoint['win_states']['kld']
+            self.win_QD = checkpoint['win_states']['QD']
+            self.win_D = checkpoint['win_states']['D']
             self.win_var = checkpoint['win_states']['var']
             self.win_mu = checkpoint['win_states']['mu']
             self.net.load_state_dict(checkpoint['model_states']['net'])
             self.optim.load_state_dict(checkpoint['optim_states']['optim'])
+            self.D.load_state_dict(checkpoint['model_states']['D'])
+            self.optim_D.load_state_dict(checkpoint['optim_states']['optim_D'])
             if not silent:
                 print("=> loaded checkpoint '{} (iter {})'".format(file_path, self.global_iter))
         else:

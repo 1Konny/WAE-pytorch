@@ -10,7 +10,11 @@ class DataGather(object):
 
     def get_empty_data_dict(self):
         return dict(iter=[],
+                    D_z=[],
+                    D_z_tilde=[],
                     recon_loss=[],
+                    Q_loss=[],
+                    D_loss=[],
                     mmd_loss=[],
                     mu=[],
                     var=[],

@@ -25,7 +25,6 @@ class CustomImageFolder(ImageFolder):
 
         return img
 
-
 class CustomTensorDataset(Dataset):
     def __init__(self, data_tensor):
         self.data_tensor = data_tensor
@@ -42,40 +41,17 @@ def return_data(args):
     dset_dir = args.dset_dir
     batch_size = args.batch_size
     num_workers = args.num_workers
-    image_size = args.image_size
-    assert image_size == 64, 'currently only image size of 64 is supported'
 
-    if name.lower() == '3dchairs':
-        root = Path(dset_dir).joinpath('3DChairs')
+    if name.lower() == 'celeba':
+        root = Path(dset_dir).joinpath('CelebA_trainval')
         transform = transforms.Compose([
-            transforms.Resize((image_size, image_size)),
+            transforms.CenterCrop((140, 140)),
+            transforms.Resize((64, 64)),
             transforms.ToTensor(),])
         train_kwargs = {'root':root, 'transform':transform}
         dset = CustomImageFolder
-
-    elif name.lower() == 'celeba':
-        root = Path(dset_dir).joinpath('CelebA')
-        transform = transforms.Compose([
-            transforms.Resize((image_size, image_size)),
-            transforms.ToTensor(),])
-        train_kwargs = {'root':root, 'transform':transform}
-        dset = CustomImageFolder
-
-    elif name.lower() == 'dsprites':
-        root = Path(dset_dir).joinpath('dsprites-dataset/dsprites_ndarray_co1sh3sc6or40x32y32_64x64.npz')
-        if not root.exists():
-            import subprocess
-            print('Now download dsprites-dataset')
-            subprocess.call(['./download_dsprites.sh'])
-            print('Finished')
-        data = np.load(root, encoding='bytes')
-        data = torch.from_numpy(data['imgs']).unsqueeze(1).float()
-        train_kwargs = {'data_tensor':data}
-        dset = CustomTensorDataset
-
     else:
         raise NotImplementedError
-
 
     train_data = dset(**train_kwargs)
     train_loader = DataLoader(train_data,
@@ -86,7 +62,6 @@ def return_data(args):
                               drop_last=True)
 
     data_loader = train_loader
-
     return data_loader
 
 if __name__ == '__main__':

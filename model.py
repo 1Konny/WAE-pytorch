@@ -17,6 +17,7 @@ class View(nn.Module):
 
 
 class WAE(nn.Module):
+    """Encoder-Decoder architecture for both WAE-MMD and WAE-GAN."""
     def __init__(self, z_dim=10, nc=3):
         super(WAE, self).__init__()
         self.z_dim = z_dim
@@ -69,6 +70,33 @@ class WAE(nn.Module):
 
     def _decode(self, z):
         return self.decoder(z)
+
+
+class Adversary(nn.Module):
+    """Adversary architecture(Discriminator) for WAE-GAN."""
+    def __init__(self, z_dim=10):
+        super(Adversary, self).__init__()
+        self.z_dim = z_dim
+        self.net = nn.Sequential(
+            nn.Linear(z_dim, 512),                                # B, 512
+            nn.ReLU(True),
+            nn.Linear(512, 512),                                  # B, 512
+            nn.ReLU(True),
+            nn.Linear(512, 512),                                  # B, 512
+            nn.ReLU(True),
+            nn.Linear(512, 512),                                  # B, 512
+            nn.ReLU(True),
+            nn.Linear(512, 1),                                    # B,   1
+        )
+        self.weight_init()
+
+    def weight_init(self):
+        for block in self._modules:
+            for m in self._modules[block]:
+                kaiming_init(m)
+
+    def forward(self, z):
+        return self.net(z)
 
 
 def kaiming_init(m):

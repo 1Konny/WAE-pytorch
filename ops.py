@@ -1,5 +1,7 @@
 """ops.py"""
 
+import math
+
 import torch.nn.functional as F
 
 
@@ -64,13 +66,23 @@ def im_kernel_sum(z1, z2, z_var, exclude_diag=True):
     z11 = z1.unsqueeze(1).repeat(1, z2.size(0), 1)
     z22 = z2.unsqueeze(0).repeat(z1.size(0), 1, 1)
 
-    kernel_matrix = C/(C+(z11-z22).pow(2).sum(2))
+    kernel_matrix = C/(1e-9+C+(z11-z22).pow(2).sum(2))
     kernel_sum = kernel_matrix.sum()
     # numerically identical to the formulation. but..
     if exclude_diag:
         kernel_sum -= kernel_matrix.diag().sum()
 
     return kernel_sum
+
+
+def log_density_igaussian(z, z_var):
+    """Calculate log density of zero-mean isotropic gaussian distribution given z and z_var."""
+    assert z.ndimension() == 2
+    assert z_var > 0
+
+    z_dim = z.size(1)
+
+    return -(z_dim/2)*math.log(2*math.pi*z_var) + z.pow(2).sum(1).div(-2*z_var)
 
 
 def multistep_lr_decay(optimizer, current_step, schedules):
