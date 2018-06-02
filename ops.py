@@ -49,6 +49,12 @@ def sum_kernel_imq(z1, z2, C, exclude_diag=True):
     return kernel_sum
 
 
+def reparametrize(mu, logvar):
+    std = logvar.div(2).exp()
+    eps = Variable(std.data.new(std.size()).normal_())
+    return mu + std*eps
+
+
 def log_density_igaussian(z, z_var):
     """Calculate log density of zero-mean isotropic gaussian distribution given z and z_var."""
     assert z.ndimension() == 2

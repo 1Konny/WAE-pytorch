@@ -99,6 +99,56 @@ class Adversary(nn.Module):
         return self.net(z)
 
 
+
+class BaseAE(nn.Module):
+    """Encoder-Decoder architecture for both beta-VAE and WAE.
+
+    This architecture is for reproducing experiments done in the following 2018 ICLR Workshop paper:
+        Learning Disentangled Representations witah Wasserstein Auto-Encoders, Rubenstein et al.
+    """
+    def __init__(self, z_dim=10):
+        super(BaseAE, self).__init__()
+        self.z_dim = z_dim
+        self.encoder = nn.Sequential(
+            nn.Linear(4096, 1200),
+            nn.ReLU(True),
+            nn.Linear(1200, 1200),
+            nn.ReLU(True),
+            nn.Linear(1200, 2*z_dim),
+        )
+        self.decoder = nn.Sequential(
+            nn.Linear(z_dim, 1200),
+            nn.Tanh(),
+            nn.Linear(1200, 1200),
+            nn.Tanh(),
+            nn.Linear(1200, 1200),
+            nn.Tanh(),
+            nn.Linear(1200, 4096),
+            nn.Tanh(),
+        )
+        self.weight_init()
+
+    def weight_init(self):
+        for block in self._modules:
+            for m in self._modules[block]:
+                kaiming_init(m)
+
+    def forward(self, x):
+        distributions = self._encode(x)
+        mu = distributions[:, self.z_dim:]
+        logvar = distributions[:, self.z_dim:]
+        z = reparametrize(mu, logvar)
+        x_recon = self._decode(z)
+
+        return x_recon, z, mu, logvar
+
+    def _encode(self, x):
+        return self.encoder(x)
+
+    def _decode(self, z):
+        return self.decoder(z)
+
+
 def kaiming_init(m):
     if isinstance(m, (nn.Linear, nn.Conv2d)):
         init.kaiming_normal(m.weight)
@@ -119,7 +169,3 @@ def normal_init(m, mean, std):
         m.weight.data.fill_(1)
         if m.bias.data is not None:
             m.bias.data.zero_()
-
-
-if __name__ == '__main__':
-    pass
