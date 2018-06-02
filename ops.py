@@ -1,77 +1,51 @@
 """ops.py"""
 
 import math
-
+import torch
 import torch.nn.functional as F
+from torch.autograd import Variable
 
 
 def reconstruction_loss(x_recon, x, distribution):
-    r"""Calculate reconstruction loss for the general auto-encoder frameworks.
-
-    Args:
-        x_recon (Tensor): reconstructed images. arbitrary shape.
-        x (Tensor): target images. same shape with x_recon.
-        distribution (str): output distributions of the decoder. bernoulli or gaussian.
-    """
     assert x_recon.size() == x.size()
 
     n = x.size(0)
     if distribution == 'bernoulli':
         recon_loss = F.binary_cross_entropy_with_logits(x_recon, x, size_average=False).div(n)
     elif distribution == 'gaussian':
-        x_recon = F.sigmoid(x_recon)
+        x_recon = F.tanh(x_recon)
         recon_loss = F.mse_loss(x_recon, x, size_average=False).div(n)
     else:
-        raise NotImplementedError('supported distributions: bernoulli/gaussian')
+        raise NotImplementedError('supported distributions: bernoulli | gaussian')
 
     return recon_loss
 
 
-def mmd(z_tilde, z, z_var):
-    r"""Calculate maximum mean discrepancy described in the WAE paper.
-
-    Args:
-        z_tilde (Tensor): samples from deterministic non-random encoder Q(Z|X).
-            2D Tensor(batch_size x dimension).
-        z (Tensor): samples from prior distributions. same shape with z_tilde.
-        z_var (Number): scalar variance of isotropic gaussian prior P(Z).
-    """
+def mmd_imq(z_tilde, z, C):
     assert z_tilde.size() == z.size()
     assert z.ndimension() == 2
 
     n = z.size(0)
-    out = im_kernel_sum(z, z, z_var, exclude_diag=True).div(n*(n-1)) + \
-          im_kernel_sum(z_tilde, z_tilde, z_var, exclude_diag=True).div(n*(n-1)) + \
-          -im_kernel_sum(z, z_tilde, z_var, exclude_diag=False).div(n*n).mul(2)
+    out = sum_kernel_imq(z, z, C, exclude_diag=True).div(n*(n-1)) + \
+          sum_kernel_imq(z_tilde, z_tilde, C, exclude_diag=True).div(n*(n-1)) - \
+          sum_kernel_imq(z, z_tilde, C, exclude_diag=False).div(n*n).mul(2)
 
     return out
 
 
-def im_kernel_sum(z1, z2, z_var, exclude_diag=True):
-    r"""Calculate sum of sample-wise measures of inverse multiquadratics kernel described in the WAE paper.
-
-    Args:
-        z1 (Tensor): batch of samples from a multivariate gaussian distribution \
-            with scalar variance of z_var.
-        z2 (Tensor): batch of samples from another multivariate gaussian distribution \
-            with scalar variance of z_var.
-        exclude_diag (bool): whether to exclude diagonal kernel measures before sum it all.
-    """
+def sum_kernel_imq(z1, z2, C, exclude_diag=True):
     assert z1.size() == z2.size()
     assert z1.ndimension() == 2
-
-    z_dim = z1.size(1)
-    C = 2*z_dim*z_var
 
     z11 = z1.unsqueeze(1).repeat(1, z2.size(0), 1)
     z22 = z2.unsqueeze(0).repeat(z1.size(0), 1, 1)
 
     kernel_matrix = C/(1e-9+C+(z11-z22).pow(2).sum(2))
-    kernel_sum = kernel_matrix.sum()
-    # numerically identical to the formulation. but..
     if exclude_diag:
-        kernel_sum -= kernel_matrix.diag().sum()
+        eye = Variable(torch.diag(kernel_matrix.data.new(100).fill_(1)))
+        kernel_matrix = kernel_matrix*(1-eye)
 
+    kernel_sum = kernel_matrix.sum()
     return kernel_sum
 
 
@@ -114,10 +88,3 @@ def kl_divergence(mu, logvar):
     dimension_wise_kld = klds.mean(0)
 
     return total_kld, mean_kld, dimension_wise_kld
-
-
-def squared_distance(tensor1, tensor2):
-    assert tensor1.size() == tensor2.size()
-    assert tensor1.ndimension() == 2
-
-    return (tensor1-tensor2).pow(2).sum(1).mean()
