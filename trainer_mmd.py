@@ -13,7 +13,7 @@ from torchvision.utils import make_grid, save_image
 
 from model import WAE
 from utils import DataGather
-from ops import reconstruction_loss, mmd, im_kernel_sum, multistep_lr_decay, cuda
+from ops import reconstruction_loss, mmd_imq, multistep_lr_decay, cuda
 from dataset import return_data
 
 
@@ -32,10 +32,12 @@ class Trainer(object):
         self.beta1 = args.beta1
         self.beta2 = args.beta2
         self.lr_schedules = {30:2, 50:5, 100:10}
+        self.decoder_dist = args.decoder_dist
 
         if args.dataset.lower() == 'celeba':
             self.nc = 3
-            self.decoder_dist = 'gaussian'
+        elif args.dataset.lower() == 'dsprites':
+            self.nc = 1
         else:
             raise NotImplementedError
 
@@ -45,15 +47,18 @@ class Trainer(object):
                                     betas=(self.beta1, self.beta2))
 
         self.gather = DataGather()
+        self.gather_step = args.gather_step
+        self.display_step = args.display_step
+        self.save_ckpt_step = args.save_ckpt_step
         self.viz_name = args.viz_name
         self.viz_port = args.viz_port
+        self.win_recon = None
+        self.win_mmd = None
+        self.win_mu = None
+        self.win_var = None
         self.viz_on = args.viz_on
         if self.viz_on:
             self.viz = visdom.Visdom(env=self.viz_name+'_lines', port=self.viz_port)
-            self.win_recon = None
-            self.win_mmd = None
-            self.win_mu = None
-            self.win_var = None
 
         self.ckpt_dir = Path(args.ckpt_dir).joinpath(args.viz_name)
         if not self.ckpt_dir.exists():
@@ -83,6 +88,7 @@ class Trainer(object):
             out = False
             while not out:
                 for x in self.data_loader:
+                    # Main Algorithms described in the paper.
                     pbar.update(1)
                     self.global_iter += 1
                     if self.global_iter % iters_per_epoch == 0:
@@ -94,32 +100,39 @@ class Trainer(object):
                     z = self.sample_z(template=z_tilde, sigma=self.z_sigma)
 
                     recon_loss = F.mse_loss(x_recon, x, size_average=False).div(self.batch_size)
-                    mmd_loss = mmd(z_tilde, z, z_var=self.z_var)
+                    mmd_loss = mmd_imq(z_tilde, z, C=2*self.z_dim*self.z_var)
                     total_loss = recon_loss + self._lambda*mmd_loss
 
                     self.optim.zero_grad()
                     total_loss.backward()
                     self.optim.step()
 
-                    if self.global_iter%1000 == 0:
+                    # Print Operations, Visualizations, Saving Checkpoints, etc.
+                    if self.viz_on and self.global_iter%self.gather_step == 0:
                         self.gather.insert(iter=self.global_iter,
                                         mu=z.mean(0).data, var=z.var(0).data,
                                         recon_loss=recon_loss.data, mmd_loss=mmd_loss.data,)
 
-                    if self.global_iter%5000 == 0:
-                        self.gather.insert(images=x.data)
-                        self.gather.insert(images=x_recon.data)
-                        self.viz_reconstruction()
-                        self.viz_lines()
-                        self.sample_x_from_z(n_sample=100)
-                        self.gather.flush()
-                        self.save_checkpoint('last')
+                    if self.global_iter%self.display_step == 0:
                         pbar.write('[{}] total_loss:{:.3f} recon_loss:{:.3f} mmd_loss:{:.3f}'.format(
                             self.global_iter, total_loss.data[0], recon_loss.data[0], mmd_loss.data[0]))
 
-                    if self.global_iter%20000 == 0:
-                        self.save_checkpoint(str(self.global_iter))
+                        if self.viz_on:
+                            self.gather.insert(images=x.data)
+                            self.gather.insert(images=x_recon.data)
+                            self.viz_reconstruction()
+                            self.viz_lines()
+                            self.sample_x_from_z(n_sample=100)
+                            self.gather.flush()
 
+                        #if self.viz_on or self.save_output:
+                        #    self.viz_traverse()
+
+                    if self.global_iter%self.save_ckpt_step == 0:
+                        self.save_checkpoint('last')
+
+                    if self.global_iter%10000 == 0:
+                        self.save_checkpoint(str(self.global_iter))
 
                     if self.global_iter >= max_iter:
                         out = True
@@ -130,8 +143,16 @@ class Trainer(object):
     def viz_reconstruction(self):
         self.net.eval()
         x = self.gather.data['images'][0][:100]
+        x_recon = self.gather.data['images'][1][:100]
+
+        if self.decoder_dist == 'bernoulli':
+            x_recon = F.sigmoid(x_recon)
+        elif self.decoder_dist == 'gaussian':
+            x = x.div(2).add(0.5)
+            x_recon = F.tanh(x_recon)
+            x_recon = x_recon.div(2).add(0.5)
+
         x = make_grid(x, normalize=True, nrow=10)
-        x_recon = F.sigmoid(self.gather.data['images'][1][:100])
         x_recon = make_grid(x_recon, normalize=True, nrow=10)
         images = torch.stack([x, x_recon], dim=0).cpu()
         self.viz.images(images, env=self.viz_name+'_reconstruction',

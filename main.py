@@ -44,6 +44,7 @@ if __name__ == "__main__":
     parser.add_argument('--lr_D', default=1e-3, type=float, help='learning rate for Adversary Network')
     parser.add_argument('--beta1', default=0.5, type=float, help='Adam optimizer beta1')
     parser.add_argument('--beta2', default=0.999, type=float, help='Adam optimizer beta2')
+    parser.add_argument('--decoder_dist', default='bernoulli', type=str, help='distribution of decoder output. bernoulli | gaussian')
 
     parser.add_argument('--dset_dir', default='data', type=str, help='dataset directory')
     parser.add_argument('--dataset', default='CelebA', type=str, help='dataset name')
@@ -52,6 +53,9 @@ if __name__ == "__main__":
     parser.add_argument('--viz_on', default=True, type=str2bool, help='enable visdom visualization')
     parser.add_argument('--viz_name', default='main', type=str, help='visdom env name')
     parser.add_argument('--viz_port', default=8097, type=str, help='visdom port number')
+    parser.add_argument('--gather_step', default=1000, type=int, help='number of iterations after which data is gathered for visdom')
+    parser.add_argument('--display_step', default=10000, type=int, help='number of iterations after which loss data is printed and visdom is updated')
+    parser.add_argument('--save_ckpt_step', default=10000, type=int, help='number of iterations after which a checkpoint is saved')
     parser.add_argument('--save_output', default=True, type=str2bool, help='save traverse images and gif')
     parser.add_argument('--output_dir', default='outputs', type=str, help='output directory')
 
