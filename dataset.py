@@ -1,6 +1,6 @@
 """dataset.py"""
 
-from pathlib import Path
+import os
 import numpy as np
 
 import torch
@@ -25,6 +25,7 @@ class CustomImageFolder(ImageFolder):
 
         return img
 
+
 class CustomTensorDataset(Dataset):
     def __init__(self, data_tensor):
         self.data_tensor = data_tensor
@@ -43,13 +44,26 @@ def return_data(args):
     num_workers = args.num_workers
 
     if name.lower() == 'celeba':
-        root = Path(dset_dir).joinpath('CelebA_trainval')
+        root = os.path.join(dset_dir, 'CelebA_trainval')
         transform = transforms.Compose([
             transforms.CenterCrop((140, 140)),
             transforms.Resize((64, 64)),
             transforms.ToTensor(),])
         train_kwargs = {'root':root, 'transform':transform}
         dset = CustomImageFolder
+
+    elif name.lower() == '3dchairs':
+        root = os.path.join(dset_dir, '3DChairs')
+        train_kwargs = {'root':root, 'transform':transform}
+        dset = CustomImageFolder
+
+    elif name.lower() == 'dsprites':
+        root = os.path.join(dset_dir, 'dsprites-dataset/dsprites_ndarray_co1sh3sc6or40x32y32_64x64.npz')
+        data = np.load(root, encoding='latin1')
+        data = torch.from_numpy(data['imgs']).unsqueeze(1).float()
+        train_kwargs = {'data_tensor':data}
+        dset = CustomTensorDataset
+
     else:
         raise NotImplementedError
 
