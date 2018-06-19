@@ -2,9 +2,11 @@
 
 import torch
 import torch.nn as nn
-#import torch.nn.functional as F
 import torch.nn.init as init
+import torch.nn.functional as F
 from torch.autograd import Variable
+
+from ops import reparametrize
 
 
 class View(nn.Module):
@@ -21,7 +23,6 @@ class WAE(nn.Module):
     def __init__(self, z_dim=10, nc=3):
         super(WAE, self).__init__()
         self.z_dim = z_dim
-        self.nc = nc
         self.encoder = nn.Sequential(
             nn.Conv2d(nc, 128, 4, 2, 1, bias=False),              # B,  128, 32, 32
             nn.BatchNorm2d(128),
@@ -72,6 +73,70 @@ class WAE(nn.Module):
         return self.decoder(z)
 
 
+class DisentangledWAE(nn.Module):
+    """AE architecture same with FactorVAE"""
+    def __init__(self, z_dim=10, nc=3):
+        super(DisentangledWAE, self).__init__()
+        self.z_dim = z_dim
+        self.encoder = nn.Sequential(
+            nn.Conv2d(nc, 32, 4, 2, 1),
+            nn.ReLU(True),
+            nn.Conv2d(32, 32, 4, 2, 1),
+            nn.ReLU(True),
+            nn.Conv2d(32, 64, 4, 2, 1),
+            nn.ReLU(True),
+            nn.Conv2d(64, 64, 4, 2, 1),
+            nn.ReLU(True),
+            nn.Conv2d(64, 128, 4, 1),
+            nn.ReLU(True),
+            nn.Conv2d(128, 2*z_dim, 1),
+            View((-1, 2*z_dim))
+        )
+        self.decoder = nn.Sequential(
+            View((-1, z_dim, 1, 1)),
+            nn.Conv2d(z_dim, 128, 1),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(128, 64, 4),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(64, 64, 4, 2, 1),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(64, 32, 4, 2, 1),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(32, 32, 4, 2, 1),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(32, nc, 4, 2, 1),
+        )
+        self.weight_init()
+
+    def weight_init(self, mode='normal'):
+        if mode == 'normal':
+            initializer = normal_init
+        elif mode == 'kaiming':
+            initializer = kaiming_init
+        else:
+            raise NotImplementedError
+
+        for block in self._modules:
+            for m in self._modules[block]:
+                initializer(m)
+
+    def forward(self, x):
+        distribution = self._encode(x)
+        mu = F.tanh(distribution[:, :self.z_dim])
+        logvar = distribution[:, self.z_dim:]
+        z = reparametrize(mu, logvar)
+
+        x_recon = self._decode(z)
+
+        return x_recon, z, mu, logvar
+
+    def _encode(self, x):
+        return self.encoder(x)
+
+    def _decode(self, z):
+        return self.decoder(z)
+
+
 class Adversary(nn.Module):
     """Adversary architecture(Discriminator) for WAE-GAN."""
     def __init__(self, z_dim=10):
@@ -101,7 +166,7 @@ class Adversary(nn.Module):
 
 def kaiming_init(m):
     if isinstance(m, (nn.Linear, nn.Conv2d)):
-        init.kaiming_normal(m.weight)
+        init.kaiming_normal_(m.weight)
         if m.bias is not None:
             m.bias.data.fill_(0)
     elif isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d)):
@@ -110,7 +175,7 @@ def kaiming_init(m):
             m.bias.data.fill_(0)
 
 
-def normal_init(m, mean, std):
+def normal_init(m, mean=0, std=0.02):
     if isinstance(m, (nn.Linear, nn.Conv2d)):
         m.weight.data.normal_(mean, std)
         if m.bias.data is not None:

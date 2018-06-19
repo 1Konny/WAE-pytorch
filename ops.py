@@ -1,15 +1,19 @@
 """ops.py"""
 
 import math
-
 import torch.nn.functional as F
+
+
+def stochastic_panelty(logvar):
+    return logvar.abs().sum().div(logvar.size(0))
+
 
 
 def reconstruction_loss(x_recon, x, distribution):
     r"""Calculate reconstruction loss for the general auto-encoder frameworks.
 
     Args:
-        x_recon (Tensor): reconstructed images. arbitrary shape.
+        x_recon (Tensor): reconstructed images before activation funciton. arbitrary shape.
         x (Tensor): target images. same shape with x_recon.
         distribution (str): output distributions of the decoder. bernoulli or gaussian.
     """
@@ -17,14 +21,14 @@ def reconstruction_loss(x_recon, x, distribution):
 
     n = x.size(0)
     if distribution == 'bernoulli':
-        recon_loss = F.binary_cross_entropy_with_logits(x_recon, x, size_average=False).div(n)
+        loss = F.binary_cross_entropy_with_logits(x_recon, x, size_average=False).div(n)
     elif distribution == 'gaussian':
         x_recon = F.sigmoid(x_recon)
-        recon_loss = F.mse_loss(x_recon, x, size_average=False).div(n)
+        loss = F.mse_loss(x_recon, x, size_average=False).div(n)
     else:
         raise NotImplementedError('supported distributions: bernoulli/gaussian')
 
-    return recon_loss
+    return loss
 
 
 def mmd(z_tilde, z, z_var):
@@ -93,6 +97,12 @@ def multistep_lr_decay(optimizer, current_step, schedules):
                 param_group['lr'] = param_group['lr']/schedules[step]
 
     return optimizer
+
+
+def reparametrize(mu, logvar):
+    std = logvar.mul(0.5).exp_()
+    eps = std.data.new(std.size()).normal_()
+    return eps.mul(std).add_(mu)
 
 
 def cuda(tensor, uses_cuda):

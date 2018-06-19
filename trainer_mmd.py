@@ -11,40 +11,47 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 from torchvision.utils import make_grid, save_image
 
-from model import WAE
+from model import WAE, DisentangledWAE
 from utils import DataGather
-from ops import reconstruction_loss, mmd, im_kernel_sum, multistep_lr_decay, cuda
+from ops import stochastic_panelty, reconstruction_loss, mmd, im_kernel_sum, multistep_lr_decay, cuda
 from dataset import return_data
 
 
 class Trainer(object):
     def __init__(self, args):
         self.use_cuda = args.cuda and torch.cuda.is_available()
+        self.device = 'cuda' if self.use_cuda else 'cpu'
         self.max_epoch = args.max_epoch
         self.global_epoch = 0
         self.global_iter = 0
 
-        self.z_dim = args.z_dim
-        self.z_var = args.z_var
-        self.z_sigma = math.sqrt(args.z_var)
-        self._lambda = args.reg_weight
-        self.lr = args.lr
-        self.beta1 = args.beta1
-        self.beta2 = args.beta2
+        self.z_dim = args.z_dim # prior & posteiror dimension
+        self.z_var = args.z_var # prior scalar variance
+        self.z_sigma = math.sqrt(args.z_var) # sqrt of scalar variance
+        self.Lambda = args.Lambda
+        self.Lambda_p = args.Lambda_p
         self.lr_schedules = {30:2, 50:5, 100:10}
 
         if args.dataset.lower() == 'celeba':
             self.nc = 3
             self.decoder_dist = 'gaussian'
+        elif args.dataset.lower() == '3dchairs':
+            self.nc = 3
+            self.decoder_dist = 'gaussian'
+        elif args.dataset.lower() == 'dsprites':
+            self.nc = 1
+            self.decoder_dist = 'bernoulli'
         else:
             raise NotImplementedError
 
-        net = WAE
+        #net = WAE
+        net = DisentangledWAE
         self.net = cuda(net(self.z_dim, self.nc), self.use_cuda)
-        self.optim = optim.Adam(self.net.parameters(), lr=self.lr,
-                                    betas=(self.beta1, self.beta2))
+        self.optim = optim.Adam(self.net.parameters(), lr=args.lr,
+                                    betas=(args.beta1, args.beta2))
 
         self.gather = DataGather()
+        self.image_gather = DataGather()
         self.viz_name = args.viz_name
         self.viz_port = args.viz_port
         self.viz_on = args.viz_on
@@ -72,7 +79,7 @@ class Trainer(object):
         self.batch_size = args.batch_size
         self.data_loader = return_data(args)
 
-    def train(self):
+    def train2(self):
         self.net.train()
 
         iters_per_epoch = len(self.data_loader)
@@ -95,7 +102,7 @@ class Trainer(object):
 
                     recon_loss = F.mse_loss(x_recon, x, size_average=False).div(self.batch_size)
                     mmd_loss = mmd(z_tilde, z, z_var=self.z_var)
-                    total_loss = recon_loss + self._lambda*mmd_loss
+                    total_loss = recon_loss + self.Lambda*mmd_loss
 
                     self.optim.zero_grad()
                     total_loss.backward()
@@ -120,6 +127,62 @@ class Trainer(object):
                     if self.global_iter%20000 == 0:
                         self.save_checkpoint(str(self.global_iter))
 
+
+                    if self.global_iter >= max_iter:
+                        out = True
+                        break
+
+            pbar.write("[Training Finished]")
+
+    def train(self):
+        self.net.train()
+
+        iters_per_epoch = len(self.data_loader)
+        max_iter = self.max_epoch*iters_per_epoch
+        pbar = tqdm(total=max_iter)
+        with tqdm(total=max_iter) as pbar:
+            pbar.update(self.global_iter)
+            out = False
+            while not out:
+                for x in self.data_loader:
+                    pbar.update(1)
+                    self.global_iter += 1
+                    if self.global_iter % iters_per_epoch == 0:
+                        self.global_epoch += 1
+                    self.optim = multistep_lr_decay(self.optim, self.global_epoch, self.lr_schedules)
+
+                    x = Variable(cuda(x, self.use_cuda))
+                    x_recon, z_tilde, mu_tilde, logvar_tilde = self.net(x)
+                    z = self.sample_z(template=z_tilde, sigma=self.z_sigma)
+
+                    recon_loss = reconstruction_loss(x_recon, x, self.decoder_dist)
+                    mmd_loss = mmd(z_tilde, z, z_var=self.z_var)
+                    logvar_loss = stochastic_panelty(logvar_tilde)
+                    total_loss = recon_loss + self.Lambda*mmd_loss + self.Lambda_p*logvar_loss
+
+                    self.optim.zero_grad()
+                    total_loss.backward()
+                    self.optim.step()
+
+                    if self.global_iter%1000 == 0:
+                        self.gather.insert(iter=self.global_iter,
+                                        mu=z.mean(0).data, var=z.var(0).data,
+                                        recon_loss=recon_loss.data, mmd_loss=mmd_loss.data,
+                                           logvar_loss=logvar_loss.data)
+
+                    if self.global_iter%5000 == 0:
+                        self.gather.insert(images=x.data)
+                        self.gather.insert(images=x_recon.data)
+                        self.viz_reconstruction()
+                        self.viz_lines()
+                        self.sample_x_from_z(n_sample=100)
+                        self.gather.flush()
+                        self.save_checkpoint('last')
+                        pbar.write('[{}] total_loss:{:.3f} recon_loss:{:.3f} mmd_loss:{:.3f}'.format(
+                            self.global_iter, total_loss.item(), recon_loss.item(), mmd_loss.item()))
+
+                    if self.global_iter%20000 == 0:
+                        self.save_checkpoint(str(self.global_iter))
 
                     if self.global_iter >= max_iter:
                         out = True
