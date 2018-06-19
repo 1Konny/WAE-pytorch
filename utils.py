@@ -1,24 +1,17 @@
 """utils.py"""
 
+import os
 import argparse
 import subprocess
 
 
 class DataGather(object):
-    def __init__(self):
+    def __init__(self, *args):
+        self.keys = args
         self.data = self.get_empty_data_dict()
 
     def get_empty_data_dict(self):
-        return dict(iter=[],
-                    D_z=[],
-                    D_z_tilde=[],
-                    recon_loss=[],
-                    Q_loss=[],
-                    D_loss=[],
-                    mmd_loss=[],
-                    mu=[],
-                    var=[],
-                    images=[],)
+        return {arg:[] for arg in self.keys}
 
     def insert(self, **kwargs):
         for key in kwargs:
@@ -29,7 +22,7 @@ class DataGather(object):
 
 
 def str2bool(v):
-    # codes from: https://stackoverflow.com/questions/15008758/parsing-boolean-values-with-argparse
+    # codes from : https://stackoverflow.com/questions/15008758/parsing-boolean-values-with-argparse
 
     if v.lower() in ('yes', 'true', 't', 'y', '1'):
         return True
@@ -47,3 +40,8 @@ def grid2gif(image_str, output_gif, delay=100):
     """
     str1 = 'convert -delay '+str(delay)+' -loop 0 ' + image_str  + ' ' + output_gif
     subprocess.call(str1, shell=True)
+
+
+def mkdirs(path):
+    if not os.path.exists(path):
+        os.makedirs(path)
