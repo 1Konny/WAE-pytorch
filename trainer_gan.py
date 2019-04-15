@@ -269,7 +269,7 @@ class Trainer(object):
                                             title='posterior mean',))
         else:
             self.win_mu = self.viz.line(X=iters,
-                                        Y=vars,
+                                        Y=mus,
                                         env=self.viz_name+'_lines',
                                         win=self.win_mu,
                                         update='append',
